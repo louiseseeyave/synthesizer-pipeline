@@ -1,4 +1,6 @@
 import numpy as np
+from functools import partial
+from schwimmbad import MultiPool
 
 from synthesizer.grid import Grid
 from synthesizer.sed import Sed
@@ -8,7 +10,7 @@ from synthesizer.load_data.load_simba import load_Simba
 
 if __name__ == "__main__":
 
-    grid_name = "bpass-2.2.1-bin_chabrier03-0.1,100.0"
+    grid_name = "bpass-2.2.1-bin_chabrier03-0.1,100.0_cloudy-c17.03"
     grid_dir = "../../synthesizer_data/grids/"
     grid = Grid(grid_name, grid_dir=grid_dir, read_lines=False)
 
@@ -38,19 +40,40 @@ if __name__ == "__main__":
         caesar_name="Groups/m100n1024_144.hdf5",
     )
 
-    # filter galaxies by stellar mass
-    stellar_masses = np.array([np.log10(_g.stellar_mass.value)
-                               for _g in gals])
+    # # filter galaxies by stellar mass
+    # stellar_masses = np.array([np.log10(_g.stellar_mass.value)
+    #                            for _g in gals])
 
-    _specs = np.vstack(
-        [
-            _g.get_spectra_incident(
-                grid,
-                # tau_v_ISM=0.33,
-                # tau_v_BC=0.67
-            )._lnu
-            for _g in gals[:10]
-        ]
-    )
+    # _specs = np.vstack(
+    #     [
+    #         _g.get_spectra_incident(
+    #             grid,
+    #             update=False,
+    #             # tau_v_ISM=0.33,
+    #             # tau_v_BC=0.67
+    #         )._lnu
+    #         for _g in gals[:10]
+    #     ]
+    # )
 
-    _specs = Sed(lam=grid.lam, lnu=_specs)
+    def get_spectra(_gal, grid):
+        # return _gal.get_spectra_incident(grid)
+        # return _gal.get_spectra_screen(grid)
+        return _gal.get_spectra_CharlotFall(
+                grid, tau_v_ISM=0.33, tau_v_BC=0.67)
+    
+    
+    import time
+    start = time.time()
+    
+    with MultiPool(4) as pool:
+        _f = partial(get_spectra, grid=grid)
+        specs = pool.map(_f, gals[:10])
+
+    specs = Sed(lam=grid.lam, lnu=[s.lnu for s in specs])
+
+    specs.get_fnu0()
+    fluxes = specs.get_broadband_fluxes(fc)
+    
+    end = time.time()
+    print(f'{end - start:.2f}')
