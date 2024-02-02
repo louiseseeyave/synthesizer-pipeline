@@ -3,6 +3,7 @@ import h5py
 import time
 import argparse
 from functools import partial
+import sys
 
 import matplotlib.pyplot as plt
 from unyt import Myr
@@ -31,6 +32,12 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
             split between young and old stellar populations, units Myr
     """
 
+    
+    # Skip over galaxies that have no stellar particles
+    if _gal.stars.nstars==0:
+        print('There are no stars in this galaxy.')
+        return None
+
     spec = {}
 
     dtm = _gal.dust_to_metal_vijayan19()
@@ -50,7 +57,7 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
 
     # Get nebular spectra for each star particle
     young_neb_spec_part = \
-        _gal.stars.get_particle_spectra_nebular(grid, young=age_pivot)
+        _gal.stars.get_particle_spectra_reprocessed(grid, young=age_pivot)
 
     # Sum and save intrinsic stellar spectra
     young_neb_spec = young_neb_spec_part.sum()
@@ -80,7 +87,7 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
     spec['gamma'] = young_spec_attenuated + old_spec_attenuated
 
     # LOS model (Vijayan+21)
-    tau_v = _gal.calculate_los_tau_v(kappa=0.0795, kernel=kern.get_kernel(), force_loop=True)
+    tau_v = _gal.calculate_los_tau_v(kappa=0.0795, kernel=kern.get_kernel(), force_loop=False)
     
     # plt.hist(np.log10(tau_v))
     # plt.show()
@@ -130,6 +137,41 @@ def set_up_filters():
     )
 
     return fc
+
+def save_dummy_file(h5_file, region, tag, filters,
+                    keys=['stellar','intrinsic','screen','CF00','gamma', 'los']):
+
+    with h5py.File(h5_file, 'w') as hf:
+        
+        # Use Region/Tag structure
+        grp = hf.require_group(f'{region}/{tag}')
+
+        # Loop through different spectra / dust models
+        for key in keys:
+            sbgrp = grp.require_group('SED')
+            dset = sbgrp.create_dataset(f'{str(key)}', data=[])
+            # dset.attrs['Units'] = str(specs[key].lnu.units)
+
+            sbgrp = grp.require_group('Fluxes')
+            # Create separate groups for different instruments
+            for f in filters:
+                dset = sbgrp.create_dataset(
+                    f'{str(key)}/{f}',
+                    data=[]
+                )
+
+                # dset.attrs['Units'] = str(fluxes[key].photometry.units)
+
+            sbgrp = grp.require_group('Luminosities')
+            # Create separate groups for different instruments
+            for f in filters:
+                dset = sbgrp.create_dataset(
+                    f'{str(key)}/{f}',
+                    data=[]
+                )
+
+                # dset.attrs['Units'] = str(luminosities[key].photometry.units)
+
 
 if __name__ == "__main__":
 
@@ -191,7 +233,7 @@ if __name__ == "__main__":
         type=int,
         required=False,
         help="Number of threads",
-        default = 10
+        default = 1
     )
 
     args = parser.parse_args()
@@ -207,25 +249,48 @@ if __name__ == "__main__":
     # fc = set_up_filters()
     fc = FilterCollection(path="filter_collection.hdf5")
 
-    gals = load_FLARES(
+    gals, n_stars = load_FLARES(
         master_file=args.master_file,
         region=args.region,
         tag=args.tag,
+        return_nstars=True,
     )
 
     n_gals = len(gals)
     print(f"Number of galaxies: {n_gals}")
 
-    # Divide work between processors
-    workloads = [n_gals // world_size for i in range(world_size)]
-    for i in range(n_gals % world_size):
-        workloads[i] += 1
-    my_start = 0
-    for i in range(my_rank):
-        my_start += workloads[i]
-    my_end = my_start + workloads[my_rank]
+    # If there are no galaxies in this snap, create dummy file
+    if n_gals==0:
+        if my_rank==0:
+            print('No galaxies. Saving dummy file.')
+            save_dummy_file(args.output, args.region, args.tag,
+                            [f.filter_code for f in fc])
+        sys.exit()
+
+    # Divide work between processors - slice list to distribute load
+    # workloads = [n_gals // world_size for i in range(world_size)]
+    # for i in range(n_gals % world_size):
+    #     workloads[i] += 1
+    # my_start = 0
+    # for i in range(my_rank):
+    #     my_start += workloads[i]
+    # my_end = my_start + workloads[my_rank]
+
+    # Divide workload between processors - using no. of stellar particles
+    ranks_npart = np.zeros(world_size)
+    my_inds = []
+    for ind in range(n_gals):
+        # Get rank with lowest number of stellar particles
+        min_ind = np.argmin(ranks_npart)
+        # Assign galaxy to that rank
+        ranks_npart[min_ind] += n_stars[ind]
+        if min_ind==my_rank:
+            my_inds.append(ind)
+                        
     if my_rank==0:
-        print(f'Rank {my_rank}: working on indices {my_start} to {my_end}')
+        # print(f'Rank {my_rank}: working on indices {my_start} to {my_end}')
+        print(f'Rank {my_rank}: working on {len(my_inds)} galaxies')
+    
 
     # spec = get_spectra(gals[100], grid, fc)
 
@@ -247,10 +312,19 @@ if __name__ == "__main__":
     dat = []
 
     # Loop over the galaxies allocated to rank
-    for gal_idx in range(my_start, my_end):
+    for gal_idx in my_inds:
         gal = gals[gal_idx]
         _spec = get_spectra(gal, grid=grid)
+        if _spec==None:
+            continue
         dat.append(_spec)
+
+    # for gal_idx in range(my_start, my_end):
+    #     gal = gals[gal_idx]
+    #     _spec = get_spectra(gal, grid=grid)
+    #     if _spec==None:
+    #         continue
+    #     dat.append(_spec)
 
     if my_rank==0:
         world_dat = dat
@@ -264,6 +338,13 @@ if __name__ == "__main__":
     end = time.time()
     print(f'Spectra generation: {end - start:.2f}')
 
+    # If there are no galaxies in this snap, create dummy file
+    if my_rank==0:
+        if len(world_dat)==0:
+            print('Galaxies have no stellar particles. Saving dummy file.')
+            save_dummy_file(args.output, args.region, args.tag,
+                            [f.filter_code for f in fc])
+            sys.exit()
     
     if my_rank==0:
 
@@ -320,51 +401,3 @@ if __name__ == "__main__":
                     )
 
                     dset.attrs['Units'] = str(luminosities[key].photometry.units)
-
-
-    # Calculate photometry (observer frame fluxes and luminosities)
-    fluxes = {}
-    luminosities = {}
-    
-    start = time.time()
-    for key in dat[0].keys():
-        specs[key].get_fnu(cosmo=Planck13, z=gals[0].redshift)
-        fluxes[key] = specs[key].get_photo_fluxes(fc)
-        luminosities[key] = specs[key].get_photo_luminosities(fc)
-
-    end = time.time()
-    print(f'Photometry calculation: {end - start:.2f}')
-
-    # Save spectra, fluxes and luminosities
-    with h5py.File(args.output, 'w') as hf:
-
-        # Use Region/Tag structure
-        grp = hf.require_group(f'{args.region}/{args.tag}')
-
-        # Loop through different spectra / dust models
-        for key in dat[0].keys():
-            sbgrp = grp.require_group('SED')
-            dset = sbgrp.create_dataset(f'{str(key)}', data=specs[key].lnu)
-            dset.attrs['Units'] = str(specs[key].lnu.units)
-
-            sbgrp = grp.require_group('Fluxes')
-            # Create separate groups for different instruments
-            for i, f in enumerate(fluxes[key].filters):
-                dset = sbgrp.create_dataset(
-                    f'{str(key)}/{f.filter_code}',
-                    data=fluxes[key][f.filter_code]
-                )
-
-                dset.attrs['Units'] = str(fluxes[key].photometry.units)
-
-
-            sbgrp = grp.require_group('Luminosities')
-            # Create separate groups for different instruments
-            for i, f in enumerate(luminosities[key].filters):
-                dset = sbgrp.create_dataset(
-                    f'{str(key)}/{f.filter_code}',
-                    data=luminosities[key][f.filter_code]
-                )
-
-                dset.attrs['Units'] = str(luminosities[key].photometry.units)
-
