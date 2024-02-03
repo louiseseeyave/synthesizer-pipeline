@@ -3,12 +3,14 @@ import h5py
 import time
 import argparse
 from functools import partial
+import sys
 
 import matplotlib.pyplot as plt
 from unyt import Myr
 from astropy.cosmology import Planck13
 
 from schwimmbad import MultiPool
+from mpi4py import MPI
 
 from synthesizer.grid import Grid
 from synthesizer.sed import Sed, combine_list_of_seds
@@ -30,6 +32,14 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
             split between young and old stellar populations, units Myr
     """
 
+    if _gal.stars.nstars==0:
+        print('There are no stars in this galaxy.')
+        spec = {}
+        keys = ['stellar','intrinsic','screen','CF00','gamma', 'los']
+        for k in keys:
+            spec[k] = np.array([])
+        return None
+    
     spec = {}
 
     dtm = _gal.dust_to_metal_vijayan19()
@@ -79,7 +89,7 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
     spec['gamma'] = young_spec_attenuated + old_spec_attenuated
 
     # LOS model (Vijayan+21)
-    tau_v = _gal.calculate_los_tau_v(kappa=0.0795, kernel=kern.get_kernel(), force_loop=True)
+    tau_v = _gal.calculate_los_tau_v(kappa=0.0795, kernel=kern.get_kernel(), force_loop=False)
     
     # plt.hist(np.log10(tau_v))
     # plt.show()
@@ -130,12 +140,55 @@ def set_up_filters():
 
     return fc
 
+
+def save_dummy_file(h5_file, region, tag, filters,
+                    keys=['stellar','intrinsic','screen','CF00','gamma', 'los']):
+
+    with h5py.File(h5_file, 'w') as hf:
+        
+        # Use Region/Tag structure
+        grp = hf.require_group(f'{region}/{tag}')
+
+        # Loop through different spectra / dust models
+        for key in keys:
+            sbgrp = grp.require_group('SED')
+            dset = sbgrp.create_dataset(f'{str(key)}', data=[])
+            # dset.attrs['Units'] = str(specs[key].lnu.units)
+
+            sbgrp = grp.require_group('Fluxes')
+            # Create separate groups for different instruments
+            for f in filters:
+                dset = sbgrp.create_dataset(
+                    f'{str(key)}/{f}',
+                    data=[]
+                )
+
+                # dset.attrs['Units'] = str(fluxes[key].photometry.units)
+
+            sbgrp = grp.require_group('Luminosities')
+            # Create separate groups for different instruments
+            for f in filters:
+                dset = sbgrp.create_dataset(
+                    f'{str(key)}/{f}',
+                    data=[]
+                )
+
+                # dset.attrs['Units'] = str(luminosities[key].photometry.units)
+
+
 if __name__ == "__main__":
+
+    # Set up MPI
+    world_comm = MPI.COMM_WORLD
+    world_size = world_comm.Get_size()
+    my_rank = world_comm.Get_rank()
+    if my_rank==0:
+        print("World size: "+str(world_size))
 
     parser = argparse.ArgumentParser(description="Run the synthesizer FLARES pipeline")
 
-    rg = "39"
-    snap = "010_z005p000"
+    rg = "20"
+    snap = "000_z015p000"
 
     parser.add_argument(
         "-region",
@@ -156,7 +209,8 @@ if __name__ == "__main__":
         type=str,
         required=False,
         help="FLARES master file",
-        default = '/cosma7/data/dp004/dc-love2/codes/flares/data/flares.hdf5'
+        default = '/cosma7/data/dp004/dc-payy1/my_files/flares_pipeline/data/flares.hdf5'
+        # default = '/cosma7/data/dp004/dc-love2/codes/flares/data/flares.hdf5'
     )
     
     parser.add_argument(
@@ -189,7 +243,7 @@ if __name__ == "__main__":
         required=False,
         help="Number of threads",
         default = 1
-        # default = 10
+        # default = 1
     )
 
     args = parser.parse_args()
@@ -211,7 +265,28 @@ if __name__ == "__main__":
         tag=args.tag,
     )
 
-    print(f"Number of galaxies: {len(gals)}")
+    n_gals = len(gals)
+    print(f"Number of galaxies: {n_gals}")
+
+    # If there are no galaxies in this snap, create dummy file
+    if n_gals==0:
+        if my_rank==0:
+            print('No galaxies. Saving dummy file.')
+            save_dummy_file(args.output, args.region, args.tag,
+                            [f.filter_code for f in fc])
+        sys.exit()
+            
+
+    # Divide work between processors
+    workloads = [n_gals // world_size for i in range(world_size)]
+    for i in range(n_gals % world_size):
+        workloads[i] += 1
+    my_start = 0
+    for i in range(my_rank):
+        my_start += workloads[i]
+    my_end = my_start + workloads[my_rank]
+    if my_rank==0:
+        print(f'Rank {my_rank}: working on indices {my_start} to {my_end}')
 
     # spec = get_spectra(gals[100], grid, fc)
 
@@ -227,83 +302,185 @@ if __name__ == "__main__":
     # plt.ylim(1e25,1e34)
     # plt.legend()
     # plt.show()
- 
+
     start = time.time()
-
-    # Get list of ParticleGalaxy objects
-    _f = partial(get_spectra, grid=grid)
-    with MultiPool(args.nprocs) as pool:
-        dat = pool.map(_f, gals)
-
-    print('Got list of ParticleGalaxy objects for this region and snap.')
-    print('Each object has the following keys:')
-    print(dat[0].keys())
-
     
-    # Combine list of dicts into dict with single Sed objects
-    specs = {}
-    for key in dat[0].keys():
-        specs[key] = combine_list_of_seds([_dat[key] for _dat in dat])
+    dat = []
+
+    # Loop over the galaxies allocated to rank
+    for gal_idx in range(my_start, my_end):
+        gal = gals[gal_idx]
+        _spec = get_spectra(gal, grid=grid)
+        if _spec==None:
+            continue
+        dat.append(_spec)
+
+    if my_rank==0:
+        world_dat = dat
+        for i in range(1, world_size):
+            rank_dat = world_comm.recv(source=i, tag=1)
+            world_dat = np.append(world_dat, rank_dat)
+        print(f'Collected data from all {len(world_dat)} galaxies.')
+    else:
+        world_comm.send(dat, dest=0, tag=1)
 
     end = time.time()
     print(f'Spectra generation: {end - start:.2f}')
 
-    print('Spec dictionary has the following keys:')
-    print(specs.keys())
+    # If there are no galaxies in this snap, create dummy file
+    if len(world_dat)==0:
+        if my_rank==0:
+            print('Galaxies have no stellar particles. Saving dummy file.')
+            save_dummy_file(args.output, args.region, args.tag,
+                            [f.filter_code for f in fc])
+        sys.exit()
     
+    if my_rank==0:
 
-    # Calculate photometry (observer frame fluxes and luminosities)
-    fluxes = {}
-    luminosities = {}
-    
-    start = time.time()
-    for key in dat[0].keys():
-        print(f'Key: {key}')
-        specs[key].get_fnu(cosmo=Planck13, z=gals[0].redshift)
-        fluxes[key] = specs[key].get_photo_fluxes(fc)
-        print(f'fluxes[key].photometry: shape {np.array(fluxes[key].photometry).shape}')
-        print(f'fluxes[key].filters: {[f.filter_code for f in fluxes[key].filters]}')
-        # print(fluxes[key].photometry)
-        luminosities[key] = specs[key].get_photo_luminosities(fc)
-        print(f'luminosities[key].photometry: shape {np.array(luminosities[key].photometry).shape}')
-        print(f'luminosities[key].filters: {[f.filter_code for f in luminosities[key].filters]}')
-        # print(luminosities[key].photometry)
-
-    end = time.time()
-    print(f'Photometry calculation: {end - start:.2f}')
-
-    # Save spectra, fluxes and luminosities
-    with h5py.File(args.output, 'w') as hf:
-
-        # Use Region/Tag structure
-        grp = hf.require_group(f'{args.region}/{args.tag}')
-
-        # Loop through different spectra / dust models
+        # Combine list of dicts into dict with single Sed objects
+        specs = {}
+        start = time.time()
         for key in dat[0].keys():
-            sbgrp = grp.require_group('SED')
-            dset = sbgrp.create_dataset(f'{str(key)}', data=specs[key].lnu)
-            dset.attrs['Units'] = str(specs[key].lnu.units)
+            specs[key] = combine_list_of_seds([_dat[key] for _dat in world_dat])
+        end = time.time()
+        print(f'Combining spectra: {end - start:.2f}')
 
-            sbgrp = grp.require_group('Fluxes')
-            # Create separate groups for different instruments
-            for i, f in enumerate(fluxes[key].filters):
-                dset = sbgrp.create_dataset(
-                    f'{str(key)}/{f.filter_code}',
-                    data=fluxes[key][f.filter_code]
-                    # data=fluxes[key].photometry[:,i]
-                )
+        # Calculate photometry (observer frame fluxes and luminosities)
+        fluxes = {}
+        luminosities = {}
+    
+        start = time.time()
+        for key in dat[0].keys():
+            specs[key].get_fnu(cosmo=Planck13, z=gals[0].redshift)
+            fluxes[key] = specs[key].get_photo_fluxes(fc)
+            luminosities[key] = specs[key].get_photo_luminosities(fc)
 
-                dset.attrs['Units'] = str(fluxes[key].photometry.units)
+        end = time.time()
+        print(f'Photometry calculation: {end - start:.2f}')
+
+        # Save spectra, fluxes and luminosities
+        with h5py.File(args.output, 'w') as hf:
+
+            # Use Region/Tag structure
+            grp = hf.require_group(f'{args.region}/{args.tag}')
+            
+            # Loop through different spectra / dust models
+            for key in dat[0].keys():
+                sbgrp = grp.require_group('SED')
+                dset = sbgrp.create_dataset(f'{str(key)}', data=specs[key].lnu)
+                dset.attrs['Units'] = str(specs[key].lnu.units)
+                # Include wavelength array corresponding to SEDs
+                if key==list(dat[0].keys())[0]:
+                    lam = sbgrp.create_dataset(f'Wavelength', data=specs[key].lam)
+                    lam.attrs['Units'] = str(specs[key].lam.units)
+                    np.savetxt("lam.txt", specs[key].lam, delimiter=" ")
+
+                
+                sbgrp = grp.require_group('Fluxes')
+                # Create separate groups for different instruments
+                for f in fluxes[key].filters:
+                    dset = sbgrp.create_dataset(
+                        f'{str(key)}/{f.filter_code}',
+                        data=fluxes[key][f.filter_code]
+                    )
+
+                    dset.attrs['Units'] = str(fluxes[key].photometry.units)
 
 
-            sbgrp = grp.require_group('Luminosities')
-            # Create separate groups for different instruments
-            for i, f in enumerate(luminosities[key].filters):
-                dset = sbgrp.create_dataset(
-                    f'{str(key)}/{f.filter_code}',
-                    data=luminosities[key][f.filter_code]
-                    # data=luminosities[key].photometry[:,i]
-                )
+                sbgrp = grp.require_group('Luminosities')
+                # Create separate groups for different instruments
+                for f in luminosities[key].filters:
+                    dset = sbgrp.create_dataset(
+                        f'{str(key)}/{f.filter_code}',
+                        data=luminosities[key][f.filter_code]
+                    )
 
-                dset.attrs['Units'] = str(luminosities[key].photometry.units)
+                    dset.attrs['Units'] = str(luminosities[key].photometry.units)
+ 
+    # start = time.time()
+
+    # # Get list of ParticleGalaxy objects
+    # _f = partial(get_spectra, grid=grid)
+    # with MultiPool(args.nprocs) as pool:
+    #     dat = pool.map(_f, gals)
+
+    # print('Got list of ParticleGalaxy objects for this region and snap.')
+    # # print('Each object has the following keys:')
+    # # print(dat[0].keys())
+    # print(dat)
+
+    # # If there are no galaxies in this snap, create dummy file
+    # if len(dat)==0:
+    #     if my_rank==0:
+    #         print('Galaxies have no stellar particles. Saving dummy file.')
+    #         save_dummy_file(args.output, args.region, args.tag,
+    #                         [f.filter_code for f in fc])
+    #     sys.exit()
+    
+    # # Combine list of dicts into dict with single Sed objects
+    # specs = {}
+    # for key in dat[0].keys():
+    #     specs[key] = combine_list_of_seds([_dat[key] for _dat in dat])
+
+    # end = time.time()
+    # print(f'Spectra generation: {end - start:.2f}')
+
+    # print('Spec dictionary has the following keys:')
+    # print(specs.keys())
+    
+
+    # # Calculate photometry (observer frame fluxes and luminosities)
+    # fluxes = {}
+    # luminosities = {}
+    
+    # start = time.time()
+    # for key in dat[0].keys():
+    #     print(f'Key: {key}')
+    #     specs[key].get_fnu(cosmo=Planck13, z=gals[0].redshift)
+    #     fluxes[key] = specs[key].get_photo_fluxes(fc)
+    #     print(f'fluxes[key].photometry: shape {np.array(fluxes[key].photometry).shape}')
+    #     print(f'fluxes[key].filters: {[f.filter_code for f in fluxes[key].filters]}')
+    #     # print(fluxes[key].photometry)
+    #     luminosities[key] = specs[key].get_photo_luminosities(fc)
+    #     print(f'luminosities[key].photometry: shape {np.array(luminosities[key].photometry).shape}')
+    #     print(f'luminosities[key].filters: {[f.filter_code for f in luminosities[key].filters]}')
+    #     # print(luminosities[key].photometry)
+
+    # end = time.time()
+    # print(f'Photometry calculation: {end - start:.2f}')
+
+    # # Save spectra, fluxes and luminosities
+    # with h5py.File(args.output, 'w') as hf:
+
+    #     # Use Region/Tag structure
+    #     grp = hf.require_group(f'{args.region}/{args.tag}')
+
+    #     # Loop through different spectra / dust models
+    #     for key in dat[0].keys():
+    #         sbgrp = grp.require_group('SED')
+    #         dset = sbgrp.create_dataset(f'{str(key)}', data=specs[key].lnu)
+    #         dset.attrs['Units'] = str(specs[key].lnu.units)
+
+    #         sbgrp = grp.require_group('Fluxes')
+    #         # Create separate groups for different instruments
+    #         for i, f in enumerate(fluxes[key].filters):
+    #             dset = sbgrp.create_dataset(
+    #                 f'{str(key)}/{f.filter_code}',
+    #                 data=fluxes[key][f.filter_code]
+    #                 # data=fluxes[key].photometry[:,i]
+    #             )
+
+    #             dset.attrs['Units'] = str(fluxes[key].photometry.units)
+
+
+    #         sbgrp = grp.require_group('Luminosities')
+    #         # Create separate groups for different instruments
+    #         for i, f in enumerate(luminosities[key].filters):
+    #             dset = sbgrp.create_dataset(
+    #                 f'{str(key)}/{f.filter_code}',
+    #                 data=luminosities[key][f.filter_code]
+    #                 # data=luminosities[key].photometry[:,i]
+    #             )
+
+    #             dset.attrs['Units'] = str(luminosities[key].photometry.units)
 

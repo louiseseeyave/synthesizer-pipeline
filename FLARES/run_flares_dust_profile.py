@@ -46,6 +46,8 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
     young_spec = \
         _gal.stars.get_spectra_incident(grid, young=age_pivot)
 
+    #
+
     # Get pure stellar spectra for all old star particles
     old_spec_part = \
         _gal.stars.get_particle_spectra_incident(grid, old=age_pivot)
@@ -252,65 +254,82 @@ def save_dummy_file(h5_file, region, tag, filters,
                 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(description="Run the synthesizer FLARES pipeline")
+    # parser = argparse.ArgumentParser(description="Run the synthesizer FLARES pipeline")
 
-    parser.add_argument(
-        "region",
-        type=str,
-        help="FLARES region",
-    )
-    
-    parser.add_argument(
-        "tag",
-        type=str,
-        help="FLARES snapshot tag",
-    )
-    
-    parser.add_argument(
-        "-master-file",
-        type=str,
-        required=False,
-        help="FLARES master file",
-        default = '/cosma7/data/dp004/dc-love2/codes/flares/data/flares.hdf5'
-    )
-    
-    parser.add_argument(
-        "-grid-name",
-        type=str,
-        required=False,
-        help="Synthesizer grid file",
-        default = "bpass-2.2.1-bin_chabrier03-0.1,100.0_cloudy-c17.03"
-    )
-    
-    parser.add_argument(
-        "-grid-directory",
-        type=str,
-        required=False,
-        help="Synthesizer grid directory",
-        default = "../../synthesizer_data/grids/"
-    )
-    
-    parser.add_argument(
-        "-output",
-        type=str,
-        required=False,
-        help="Output file",
-        default = "./flares_photometry.hdf5"
-    )
-    
-    parser.add_argument(
-        "-nprocs",
-        type=int,
-        required=False,
-        help="Number of threads",
-        default = 10
-    )
+    rg = "19"
+    snap = "007_z008p000"
 
-    args = parser.parse_args()
+    # parser.add_argument(
+    #     "-region",
+    #     type=str,
+    #     help="FLARES region",
+    #     default = rg
+    # )
+    
+    # parser.add_argument(
+    #     "-tag",
+    #     type=str,
+    #     help="FLARES snapshot tag",
+    #     default = snap
+    # )
+    
+    # parser.add_argument(
+    #     "-master-file",
+    #     type=str,
+    #     required=False,
+    #     help="FLARES master file",
+    #     default = '/cosma7/data/dp004/dc-payy1/my_files/flares_pipeline/data/flares.hdf5'
+    master_file = '/cosma7/data/dp004/dc-payy1/my_files/flares_pipeline/data/flares.hdf5'
+    #     # default = '/cosma7/data/dp004/dc-love2/codes/flares/data/flares.hdf5'
+    # )
+    
+    # parser.add_argument(
+    #     "-grid-name",
+    #     type=str,
+    #     required=False,
+    #     help="Synthesizer grid file",
+    #     default = "bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03"
+    grid_name = "bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03"
+    #     # default = "bpass-2.2.1-bin_chabrier03-0.1,100.0_cloudy-c17.03"
+    # )
+    
+    # parser.add_argument(
+    #     "-grid-directory",
+    #     type=str,
+    #     required=False,
+    #     help="Synthesizer grid directory",
+    #     default = "/cosma7/data/dp004/dc-seey1/modules/synthesizer-sam/grids/"
+    grid_dir = "/cosma7/data/dp004/dc-seey1/modules/synthesizer-sam/grids/"
+    #     # default = "../../synthesizer_data/grids/"
+    # )
+    
+    # parser.add_argument(
+    #     "-output",
+    #     type=str,
+    #     required=False,
+    #     help="Output file",
+    #     default = f"./flares_photometry_{rg}_{snap}.hdf5"
+    output = f"./flares_photometry_{rg}_{snap}.hdf5"
+    #     # default = "./flares_photometry.hdf5"
+    # )
+    
+    # parser.add_argument(
+    #     "-nprocs",
+    #     type=int,
+    #     required=False,
+    #     help="Number of threads",
+    #     default = 28
+    nprocs = 1
+    #     # default = 10
+    # )
+
+    # args = parser.parse_args()
 
     grid = Grid(
-        args.grid_name,
-        grid_dir=args.grid_directory,
+        # args.grid_name,
+        grid_name,
+        # grid_dir=args.grid_directory,
+        grid_dir=grid_dir,
         read_lines=False
     )
 
@@ -320,9 +339,12 @@ if __name__ == "__main__":
     fc = FilterCollection(path="filter_collection.hdf5")
 
     gals = load_FLARES(
-        master_file=args.master_file,
-        region=args.region,
-        tag=args.tag,
+        # master_file=args.master_file,
+        master_file=master_file,
+        region=rg,
+        tag=snap
+        # region=args.region,
+        # tag=args.tag,
     )
 
     print(f"Number of galaxies: {len(gals)}")
@@ -330,8 +352,9 @@ if __name__ == "__main__":
     # If there are no galaxies in this snap, create dummy file
     if len(gals)==0:
         print('No galaxies. Saving dummy file.')
-        save_dummy_file(args.output, args.region, args.tag,
-                        [f.filter_code for f in fc])
+        save_dummy_file(# args.output, args.region, args.tag,
+            output, rg, snap,
+            [f.filter_code for f in fc])
         sys.exit()
 
     # spec = get_spectra(gals[100], grid, fc)
@@ -350,20 +373,31 @@ if __name__ == "__main__":
     # plt.show()
  
     start = time.time()
+
+    dat = []
+
+    for gal_idx in range(len(gals)):
+        gal = gals[gal_idx]
+        _spec = get_spectra(gal, grid=grid)
+        if _spec==None:
+            continue
+        dat.append(_spec)
     
-    _f = partial(get_spectra, grid=grid)
-    with MultiPool(args.nprocs) as pool:
-        dat = pool.map(_f, gals)
+    # _f = partial(get_spectra, grid=grid)
+    # with MultiPool(args.nprocs) as pool:
+    # with MultiPool(nprocs) as pool:
+    #     dat = pool.map(_f, gals)
 
     # Get rid of Nones (galaxies that don't have stellar particles)
-    mask = np.array(dat)==None
-    dat = np.array(dat)[~mask]
+    # mask = np.array(dat)==None
+    # dat = np.array(dat)[~mask]
 
     # If there are no galaxies in this snap, create dummy file
     if len(dat)==0:
         print('Galaxies have no stellar particles. Saving dummy file.')
-        save_dummy_file(args.output, args.region, args.tag,
-                        [f.filter_code for f in fc])
+        save_dummy_file(# args.output, args.region, args.tag,
+            output, rg, tag,
+            [f.filter_code for f in fc])
         sys.exit()
    
     # Combine list of dicts into dict with single Sed objects
@@ -389,20 +423,18 @@ if __name__ == "__main__":
     print(f'Photometry calculation: {end - start:.2f}')
 
     # Save spectra, fluxes and luminosities
-    with h5py.File(args.output, 'w') as hf:
+    # with h5py.File(args.output, 'w') as hf:
+    with h5py.File(output, 'w') as hf:
 
         # Use Region/Tag structure
-        grp = hf.require_group(f'{args.region}/{args.tag}')
+        # grp = hf.require_group(f'{args.region}/{args.tag}')
+        grp = hf.require_group(f'{rg}/{snap}')
 
         # Loop through different spectra / dust models
         for key in dat[0].keys():
             sbgrp = grp.require_group('SED')
             dset = sbgrp.create_dataset(f'{str(key)}', data=specs[key].lnu)
             dset.attrs['Units'] = str(specs[key].lnu.units)
-            # Include wavelength array corresponding to SEDs
-            if key==np.array(dat[0].keys())[0]:
-                lam = sbgrp.create_dataset(f'Wavelength', data=specs[key].lam)
-                lam.attrs['Units'] = str(specs[key].lam.units)
 
             sbgrp = grp.require_group('Fluxes')
             # Create separate groups for different instruments

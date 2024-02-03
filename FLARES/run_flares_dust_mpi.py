@@ -257,7 +257,9 @@ if __name__ == "__main__":
     )
 
     n_gals = len(gals)
-    print(f"Number of galaxies: {n_gals}")
+    if my_rank==0:
+        print(f"Number of galaxies: {n_gals}")
+        print(f'List of stellar particles: {n_stars}')
 
     # If there are no galaxies in this snap, create dummy file
     if n_gals==0:
@@ -279,6 +281,7 @@ if __name__ == "__main__":
     # Divide workload between processors - using no. of stellar particles
     ranks_npart = np.zeros(world_size)
     my_inds = []
+    # Loop over every galaxy
     for ind in range(n_gals):
         # Get rank with lowest number of stellar particles
         min_ind = np.argmin(ranks_npart)
@@ -287,10 +290,9 @@ if __name__ == "__main__":
         if min_ind==my_rank:
             my_inds.append(ind)
                         
-    if my_rank==0:
-        # print(f'Rank {my_rank}: working on indices {my_start} to {my_end}')
-        print(f'Rank {my_rank}: working on {len(my_inds)} galaxies')
-    
+    # if my_rank==0:
+    # print(f'Rank {my_rank}: working on indices {my_start} to {my_end}')
+    print(f'Rank {my_rank}: working on {len(my_inds)} galaxies')
 
     # spec = get_spectra(gals[100], grid, fc)
 
