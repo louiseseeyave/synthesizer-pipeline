@@ -346,7 +346,7 @@ if __name__ == "__main__":
             continue
         dat.append(_spec)
 
-    # 
+    # Collate galaxies on rank 0
     if my_rank==0:
         world_dat = dat
         for i in range(1, world_size):
