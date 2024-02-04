@@ -3,6 +3,7 @@ import h5py
 import time
 import argparse
 from functools import partial
+import sys
 
 import matplotlib.pyplot as plt
 from unyt import Myr
@@ -19,7 +20,9 @@ from synthesizer.conversions import lnu_to_absolute_mag
 from synthesizer.dust.attenuation import PowerLaw
 
 
+
 def get_spectra(_gal, grid, age_pivot=10. * Myr):
+    
     """
     Helper method for spectra generation
 
@@ -30,46 +33,52 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
             split between young and old stellar populations, units Myr
     """
 
+
+    # Skip over galaxies that have no stellar particles
+    if _gal.stars.nstars==0:
+        print('There are no stars in this galaxy.')
+        return None
+
     spec = {}
 
     dtm = _gal.dust_to_metal_vijayan19()
-    
+
     # Get young pure stellar spectra (integrated)
     young_spec = \
         _gal.stars.get_spectra_incident(grid, young=age_pivot)
-    
+
     # Get pure stellar spectra for all old star particles
     old_spec_part = \
         _gal.stars.get_particle_spectra_incident(grid, old=age_pivot)
-    
+
     # Sum and save old and young pure stellar spectra
     old_spec = old_spec_part.sum()
 
     spec['stellar'] = old_spec + young_spec
 
     # Get nebular spectra for each star particle
-    young_neb_spec_part = \
-        _gal.stars.get_particle_spectra_nebular(grid, young=age_pivot)
+    young_reprocessed_spec_part = \
+        _gal.stars.get_particle_spectra_reprocessed(grid, young=age_pivot)
 
     # Sum and save intrinsic stellar spectra
-    young_neb_spec = young_neb_spec_part.sum()
+    young_reprocessed_spec = young_reprocessed_spec_part.sum()
 
-    
+
     # Save intrinsic stellar spectra
-    spec['intrinsic'] = young_neb_spec + old_spec
+    spec['intrinsic'] = young_reprocessed_spec + old_spec
 
     # Simple screen model
     spec['screen'] = spec['intrinsic'].apply_attenuation(tau_v=0.33)
-    
+
     # Charlot & Fall attenuation model
-    young_spec_attenuated = young_neb_spec.apply_attenuation(tau_v=0.33 + 0.67)
+    young_spec_attenuated = young_reprocessed_spec.apply_attenuation(tau_v=0.33 + 0.67)
     old_spec_attenuated = old_spec.apply_attenuation(tau_v=0.33)
     spec['CF00'] = young_spec_attenuated + old_spec_attenuated
 
     # Gamma model (modified version of Lovell+19)
     gamma = _gal.screen_dust_gamma_parameter()
 
-    young_spec_attenuated = young_neb_spec.apply_attenuation(
+    young_spec_attenuated = young_reprocessed_spec.apply_attenuation(
         tau_v=gamma * (0.33 + 0.67)
     )
     old_spec_attenuated = old_spec.apply_attenuation(
@@ -79,12 +88,12 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
     spec['gamma'] = young_spec_attenuated + old_spec_attenuated
 
     # LOS model (Vijayan+21)
-    tau_v = _gal.calculate_los_tau_v(kappa=0.0795, kernel=kern.get_kernel(), force_loop=True)
-    
+    tau_v = _gal.calculate_los_tau_v(kappa=0.0795, kernel=kern.get_kernel(), force_loop=False)
+
     # plt.hist(np.log10(tau_v))
     # plt.show()
 
-    young_spec_attenuated = young_neb_spec_part.apply_attenuation(
+    young_spec_attenuated = young_reprocessed_spec_part.apply_attenuation(
         tau_v=tau_v + (_gal.stars.metallicities / 0.01)
     )
     old_spec_attenuated = old_spec_part.apply_attenuation(tau_v=tau_v)
@@ -92,6 +101,7 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
     spec['los'] = young_spec_attenuated.sum() + old_spec_attenuated.sum()
 
     return spec
+
 
 def set_up_filters():
     
@@ -130,6 +140,58 @@ def set_up_filters():
 
     return fc
 
+
+def save_dummy_file(h5_file, region, tag, filters,
+                    keys=['stellar','intrinsic','screen','CF00','gamma', 'los']):
+
+    """
+    Save a dummy hdf5 file with the expected hdf5 structure but
+    containing no data. Useful if a snapshot contains no galaxies.
+
+    Args
+        h5_file (str):
+            file to be written
+        region (str):
+            region e.g. '00'
+        tag (str):
+            snapshot label e.g. '000_z015p000'
+        filters:
+            filter collection
+        keys:
+            spectra / dust models
+    """
+
+    with h5py.File(h5_file, 'w') as hf:
+        
+        # Use Region/Tag structure
+        grp = hf.require_group(f'{region}/{tag}')
+
+        # Loop through different spectra / dust models
+        for key in keys:
+            
+            sbgrp = grp.require_group('SED')
+            dset = sbgrp.create_dataset(f'{str(key)}', data=[])
+            dset.attrs['Units'] = 'erg/(Hz*s)'
+
+            sbgrp = grp.require_group('Fluxes')
+            # Create separate groups for different instruments
+            for f in filters:
+                dset = sbgrp.create_dataset(
+                    f'{str(key)}/{f}',
+                    data=[]
+                )
+                dset.attrs['Units'] = 'erg/(cm**2*s)'
+
+            sbgrp = grp.require_group('Luminosities')
+            # Create separate groups for different instruments
+            for f in filters:
+                dset = sbgrp.create_dataset(
+                    f'{str(key)}/{f}',
+                    data=[]
+                )
+                dset.attrs['Units'] = 'erg/s'
+
+        
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Run the synthesizer FLARES pipeline")
@@ -196,7 +258,8 @@ if __name__ == "__main__":
 
     kern = Kernel()
 
-    fc = set_up_filters()
+    # fc = set_up_filters()
+    fc = FilterCollection(path="filter_collection.hdf5")
 
     gals = load_FLARES(
         master_file=args.master_file,
@@ -205,6 +268,13 @@ if __name__ == "__main__":
     )
 
     print(f"Number of galaxies: {len(gals)}")
+
+    # If there are no galaxies in this snap, create dummy file
+    if len(gals)==0:
+        print('No galaxies. Saving dummy file.')
+        save_dummy_file(args.output, args.region, args.tag,
+                        [f.filter_code for f in fc])
+        sys.exit()
 
     # spec = get_spectra(gals[100], grid, fc)
 
@@ -226,6 +296,17 @@ if __name__ == "__main__":
     _f = partial(get_spectra, grid=grid)
     with MultiPool(args.nprocs) as pool:
         dat = pool.map(_f, gals)
+
+    # Get rid of Nones (galaxies that don't have stellar particles)
+    mask = np.array(dat)==None
+    dat = np.array(dat)[~mask]
+
+    # If there are no galaxies in this snap, create dummy file
+    if len(dat)==0:
+        print('Galaxies have no stellar particles. Saving dummy file.')
+        save_dummy_file(args.output, args.region, args.tag,
+                        [f.filter_code for f in fc])
+        sys.exit()
    
     # Combine list of dicts into dict with single Sed objects
     specs = {}
@@ -260,13 +341,17 @@ if __name__ == "__main__":
             sbgrp = grp.require_group('SED')
             dset = sbgrp.create_dataset(f'{str(key)}', data=specs[key].lnu)
             dset.attrs['Units'] = str(specs[key].lnu.units)
+            # Include wavelength array corresponding to SEDs
+            if key==np.array(dat[0].keys())[0]:
+                lam = sbgrp.create_dataset(f'Wavelength', data=specs[key].lam)
+                lam.attrs['Units'] = str(specs[key].lam.units)
 
             sbgrp = grp.require_group('Fluxes')
             # Create separate groups for different instruments
             for f in fluxes[key].filters:
                 dset = sbgrp.create_dataset(
                     f'{str(key)}/{f.filter_code}',
-                    data=fluxes[key].photometry
+                    data=fluxes[key][f.filter_code]
                 )
 
                 dset.attrs['Units'] = str(fluxes[key].photometry.units)
@@ -277,7 +362,7 @@ if __name__ == "__main__":
             for f in luminosities[key].filters:
                 dset = sbgrp.create_dataset(
                     f'{str(key)}/{f.filter_code}',
-                    data=luminosities[key].photometry
+                    data=luminosities[key][f.filter_code]
                 )
 
                 dset.attrs['Units'] = str(luminosities[key].photometry.units)
