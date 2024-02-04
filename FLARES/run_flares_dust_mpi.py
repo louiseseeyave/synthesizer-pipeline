@@ -53,28 +53,28 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
     spec['stellar'] = old_spec + young_spec
 
     # Get nebular spectra for each star particle
-    young_neb_spec_part = \
+    young_reprocessed_spec_part = \
         _gal.stars.get_particle_spectra_reprocessed(grid, young=age_pivot)
 
     # Sum and save intrinsic stellar spectra
-    young_neb_spec = young_neb_spec_part.sum()
+    young_reprocessed_spec = young_reprocessed_spec_part.sum()
 
     
     # Save intrinsic stellar spectra
-    spec['intrinsic'] = young_neb_spec + old_spec
+    spec['intrinsic'] = young_reprocessed_spec + old_spec
 
     # Simple screen model
     spec['screen'] = spec['intrinsic'].apply_attenuation(tau_v=0.33)
     
     # Charlot & Fall attenuation model
-    young_spec_attenuated = young_neb_spec.apply_attenuation(tau_v=0.33 + 0.67)
+    young_spec_attenuated = young_reprocessed_spec.apply_attenuation(tau_v=0.33 + 0.67)
     old_spec_attenuated = old_spec.apply_attenuation(tau_v=0.33)
     spec['CF00'] = young_spec_attenuated + old_spec_attenuated
 
     # Gamma model (modified version of Lovell+19)
     gamma = _gal.screen_dust_gamma_parameter()
 
-    young_spec_attenuated = young_neb_spec.apply_attenuation(
+    young_spec_attenuated = young_reprocessed_spec.apply_attenuation(
         tau_v=gamma * (0.33 + 0.67)
     )
     old_spec_attenuated = old_spec.apply_attenuation(
@@ -89,7 +89,7 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
     # plt.hist(np.log10(tau_v))
     # plt.show()
 
-    young_spec_attenuated = young_neb_spec_part.apply_attenuation(
+    young_spec_attenuated = young_reprocessed_spec_part.apply_attenuation(
         tau_v=tau_v + (_gal.stars.metallicities / 0.01)
     )
     old_spec_attenuated = old_spec_part.apply_attenuation(tau_v=tau_v)
