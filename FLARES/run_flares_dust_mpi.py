@@ -2,7 +2,6 @@ import numpy as np
 import h5py
 import time
 import argparse
-from functools import partial
 import sys
 
 import matplotlib.pyplot as plt
@@ -16,8 +15,6 @@ from synthesizer.sed import Sed, combine_list_of_seds
 from synthesizer.filters import FilterCollection
 from synthesizer.load_data.load_flares import load_FLARES
 from synthesizer.kernel_functions import Kernel
-from synthesizer.conversions import lnu_to_absolute_mag
-from synthesizer.dust.attenuation import PowerLaw
 
 
 def get_spectra(_gal, grid, age_pivot=10. * Myr):
@@ -271,7 +268,6 @@ if __name__ == "__main__":
         master_file=args.master_file,
         region=args.region,
         tag=args.tag,
-        return_nstars=True,
     )
 
     n_gals = len(gals)

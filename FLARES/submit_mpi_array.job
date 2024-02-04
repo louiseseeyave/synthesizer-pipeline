@@ -7,9 +7,7 @@
 #SBATCH -p cosma7-rp
 #SBATCH -A dp004
 #SBATCH --exclusive
-# #SBATCH --array=0
-# #SBATCH --array=0-219
-#SBATCH --array=3
+#SBATCH --array=0-479
 #SBATCH --no-requeue
 #SBATCH -t 24:00:00
 
@@ -25,24 +23,24 @@ source /cosma7/data/dp004/dc-seey1/venvs/pyenv3.10/bin/activate
 regions=({00..39})
 
 tags=(
-    # "000_z015p000"
-    # "001_z014p000"
-    # "002_z013p000"
-    # "003_z012p000"
-    # "004_z011p000"
-    # "005_z010p000" 
-    # "006_z009p000"
+    "000_z015p000"
+    "001_z014p000"
+    "002_z013p000"
+    "003_z012p000"
+    "004_z011p000"
+    "005_z010p000" 
+    "006_z009p000"
     "007_z008p000"
-    # "008_z007p000" 
-    # "009_z006p000"
-    # "010_z005p000"
-    # "011_z004p770"
+    "008_z007p000" 
+    "009_z006p000"
+    "010_z005p000"
+    "011_z004p770"
 )
 
 region_idx=$(($SLURM_ARRAY_TASK_ID/${#tags[@]}))
 tag_idx=$(($SLURM_ARRAY_TASK_ID%${#tags[@]}))
 
-out_file=./data/flares_photometry_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
+out_file=./data_temp/flares_photometry_${regions[$region_idx]}_${tags[$tag_idx]}_test.hdf5
 
 if [ -f $out_file ]; then
     echo 'File exists.'
