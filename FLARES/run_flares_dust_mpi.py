@@ -346,16 +346,21 @@ if __name__ == "__main__":
             continue
         dat.append(_spec)
 
-    # 
+    # Collate galaxies on rank 0
     if my_rank==0:
-        world_dat = dat
+        # world_dat = dat
+        world_dat = np.empty(n_gals, dtype=object)
+        world_dat[my_inds] = dat
         for i in range(1, world_size):
             rank_dat = world_comm.recv(source=i, tag=1)
-            world_dat = np.append(world_dat, rank_dat)
+            rank_inds = world_comm.recv(source=i, tag=2)
+            # world_dat = np.append(world_dat, rank_dat)
+            world_dat[rank_inds] = rank_dat
         print(f'Collected data from all {len(world_dat)} galaxies.')
     else:
         world_comm.send(dat, dest=0, tag=1)
-
+        world_comm.send(my_inds, dest=0, tag=2)
+        
     end = time.time()
     print(f'Spectra generation: {end - start:.2f}')
 

@@ -7,7 +7,7 @@
 #SBATCH -p cosma7-rp
 #SBATCH -A dp004
 #SBATCH --exclusive
-#SBATCH --array=0-479
+#SBATCH --array=147
 #SBATCH --no-requeue
 #SBATCH -t 24:00:00
 
@@ -34,13 +34,13 @@ tags=(
     "008_z007p000" 
     "009_z006p000"
     "010_z005p000"
-    "011_z004p770"
+    # "011_z004p770"
 )
 
 region_idx=$(($SLURM_ARRAY_TASK_ID/${#tags[@]}))
 tag_idx=$(($SLURM_ARRAY_TASK_ID%${#tags[@]}))
 
-out_file=./data_temp/flares_photometry_${regions[$region_idx]}_${tags[$tag_idx]}_test.hdf5
+out_file=./data_temp/flares_photometry_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
 
 if [ -f $out_file ]; then
     echo 'File exists.'
@@ -61,7 +61,6 @@ grid_dir=/cosma7/data/dp004/dc-seey1/modules/synthesizer-sam/grids
 master=/cosma7/data/dp004/dc-payy1/my_files/flares_pipeline/data/flares.hdf5
 
 mpirun -np $n_cpus python3 run_flares_dust_mpi.py ${regions[$region_idx]} ${tags[$tag_idx]} -output $out_file -grid-name $grid_name -grid-directory $grid_dir -master-file $master
-
 
 echo "Job done, info follows..."
 sacct -j $SLURM_JOBID --format=JobID,JobName,Partition,MaxRSS,Elapsed,ExitCode
