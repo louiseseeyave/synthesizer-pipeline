@@ -40,7 +40,10 @@ tags=(
 region_idx=$(($SLURM_ARRAY_TASK_ID/${#tags[@]}))
 tag_idx=$(($SLURM_ARRAY_TASK_ID%${#tags[@]}))
 
-out_file=./data_indices/flares_photometry_indices_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
+# out_file=./data_indices/flares_photometry_indices_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
+# out_file=./data_indices/flares_photometry_no-cloudy_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
+# out_file=./data_indices/flares_photometry_cloudy-ld_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
+out_file=./data_indices/flares_photometry_cloudy-hd_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
 
 if [ -f $out_file ]; then
     echo 'File exists.'
@@ -56,11 +59,21 @@ echo Tag: ${tags[$tag_idx]}
 echo $out_file
 echo Number of CPUs: $n_cpus
 
-grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03
+# grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0.hdf5
+# grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03
+grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03_resolution:0.1.hdf5
+
 grid_dir=/cosma7/data/dp004/dc-seey1/modules/synthesizer-sam/grids
+
 master=/cosma7/data/dp004/dc-payy1/my_files/flares_pipeline/data/flares.hdf5
 
-mpirun -np $n_cpus python3 run_flares_dust_mpi_indices.py ${regions[$region_idx]} ${tags[$tag_idx]} -output $out_file -grid-name $grid_name -grid-directory $grid_dir -master-file $master
+mpirun -np $n_cpus python3 run_flares_nodust_mpi_indices.py \
+       ${regions[$region_idx]} \
+       ${tags[$tag_idx]} \
+       -output $out_file \
+       -grid-name $grid_name \
+       -grid-directory $grid_dir \
+       -master-file $master
 
 echo "Job done, info follows..."
 sacct -j $SLURM_JOBID --format=JobID,JobName,Partition,MaxRSS,Elapsed,ExitCode
