@@ -7,7 +7,7 @@
 #SBATCH -p cosma7-rp
 #SBATCH -A dp004
 #SBATCH --exclusive
-#SBATCH --array=147
+#SBATCH --array=18,39,59,61,95,182,206,239,383
 #SBATCH --no-requeue
 #SBATCH -t 24:00:00
 
