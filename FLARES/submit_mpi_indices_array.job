@@ -1,15 +1,16 @@
 #!/bin/bash -l
 #SBATCH -J synthesizer_FLARES_pipeline
-#SBATCH --ntasks=112
+#SBATCH --ntasks=5
 #SBATCH --cpus-per-task=1
 #SBATCH -o logs/job.%J.dump
 #SBATCH -e logs/job.%J.err
 #SBATCH -p cosma7-rp
 #SBATCH -A dp004
 #SBATCH --exclusive
-#SBATCH --array=275-285
+# #SBATCH --array=0-439
+#SBATCH --array=434
 #SBATCH --no-requeue
-#SBATCH -t 12:00:00
+#SBATCH -t 06:00:00
 
 module purge
 module load rockport-settings
@@ -43,7 +44,8 @@ tag_idx=$(($SLURM_ARRAY_TASK_ID%${#tags[@]}))
 # out_file=./data_indices/flares_photometry_indices_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
 # out_file=./data_indices/flares_photometry_no-cloudy_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
 # out_file=./data_indices/flares_photometry_cloudy-ld_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
-out_file=./data_indices/flares_photometry_cloudy-hd_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
+out_file=./data_indices/flares_photometry_bpass-v2p2p1_no-cloudy_new_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
+# out_file=./data_indices/flares_photometry_bpass-v2p3_no-cloudy_alpha-0p6_${regions[$region_idx]}_${tags[$tag_idx]}.hdf5
 
 if [ -f $out_file ]; then
     echo 'File exists.'
@@ -52,7 +54,7 @@ else
     echo 'File does not exist. Continuing...'
 fi
 
-n_cpus=112
+n_cpus=5
 
 echo Region: ${regions[$region_idx]}
 echo Tag: ${tags[$tag_idx]}
@@ -61,13 +63,14 @@ echo Number of CPUs: $n_cpus
 
 # grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0.hdf5
 # grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03
-grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03_resolution:0.1.hdf5
+grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0.hdf5
+# grid_name=bpass-2.3-bin_chabrier03-0.1,300.0_alpha0.6.hdf5
 
 grid_dir=/cosma7/data/dp004/dc-seey1/modules/synthesizer-sam/grids
 
 master=/cosma7/data/dp004/dc-payy1/my_files/flares_pipeline/data/flares.hdf5
 
-mpirun -np $n_cpus python3 run_flares_nodust_mpi_indices.py \
+mpirun -np $n_cpus python3 run_flares_nodust_mpi_indices_new.py \
        ${regions[$region_idx]} \
        ${tags[$tag_idx]} \
        -output $out_file \

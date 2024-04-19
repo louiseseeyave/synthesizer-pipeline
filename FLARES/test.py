@@ -17,129 +17,68 @@ from synthesizer.load_data.load_flares import load_FLARES
 from synthesizer.kernel_functions import Kernel
 
 
-def get_spectra(_gal, grid, age_pivot=10. * Myr):
+def get_lum_weighted_metallicity(_gal, grid, filters, age_pivot=10*Myr):
 
     """
-    Helper method for spectra generation
+    Get UV luminosity of each stellar particle and use it to obtain
+    the weighted metallicity of the galaxy.
 
     Args:
         _gal (gal type)
         grid (grid type)
-        age_pivot (float)
-            split between young and old stellar populations, units Myr
     """
-
     
     # Skip over galaxies that have no stellar particles
     if _gal.stars.nstars==0:
         print('There are no stars in this galaxy.')
         return None
 
-    spec = {}
-
-    dtm = _gal.dust_to_metal_vijayan19()
+    print(f'There are {_gal.stars.nstars} stars in this galaxy.')
     
-    # Get young pure stellar spectra (integrated)
-    young_spec = \
-        _gal.stars.get_spectra_incident(grid, young=age_pivot)
+    # Get particle metallicity
+    metallicity =_gal.stars.metallicities
+    print('metallicity:', metallicity)
+    print('ages:', _gal.stars.ages)
+
+    # Check stellar ages
+    ages = (_gal.stars.ages).to('Myr')
+    old = ages > age_pivot
+    print(f'{np.sum(old)} star particles above age pivot.')
+    young = ages < age_pivot
+    print(f'{np.sum(young)} star particles below age pivot.')
+
+    # if my_rank==0:
+    #     print('ending a')
+    #     sys.exit()
+
+    # Get pure stellar spectra for all star particles
+    sed = _gal.stars.get_particle_spectra_incident(grid) #, old=age_pivot)
     
-    # Get pure stellar spectra for all old star particles
-    old_spec_part = \
-        _gal.stars.get_particle_spectra_incident(grid, old=age_pivot)
+    # if my_rank==0:
+    #     print('ending a')
+    #     sys.exit()
     
-    # Sum and save old and young pure stellar spectra
-    old_spec = old_spec_part.sum()
-
-    spec['stellar'] = old_spec + young_spec
-
-    # Commented out because we don't want dust or nebular emission
-    # # Get nebular spectra for each star particle
-    # young_reprocessed_spec_part = \
-    #     _gal.stars.get_particle_spectra_reprocessed(grid, young=age_pivot)
-
-    # # Sum and save intrinsic stellar spectra
-    # young_reprocessed_spec = young_reprocessed_spec_part.sum()
-
+    # Calculate the observed SED in nJy
+    sed.get_fnu(Planck13, _gal.redshift, igm=False)
     
-    # # Save intrinsic stellar spectra
-    # spec['intrinsic'] = young_reprocessed_spec + old_spec
+    # Get UV luminosity
+    lum = \
+        _gal.stars.particle_spectra["incident"].get_photo_luminosities(filters)
+    luv = lum['UV1500']
 
-    # # Simple screen model
-    # spec['screen'] = spec['intrinsic'].apply_attenuation(tau_v=0.33)
+    print(f'luv.shape: {luv.shape}')
+    print(f'log10luv: {np.log10(luv)}')
     
-    # # Charlot & Fall attenuation model
-    # young_spec_attenuated = young_reprocessed_spec.apply_attenuation(tau_v=0.33 + 0.67)
-    # old_spec_attenuated = old_spec.apply_attenuation(tau_v=0.33)
-    # spec['CF00'] = young_spec_attenuated + old_spec_attenuated
+    # Calculate UV luminosity-weighted metallicity
+    weighted_metallicity = np.dot(metallicity, luv)/np.sum(luv)
 
-    # # Gamma model (modified version of Lovell+19)
-    # gamma = _gal.screen_dust_gamma_parameter()
+    # print(f'Weighted metallicity: {weighted_metallicity.value}')
 
-    # young_spec_attenuated = young_reprocessed_spec.apply_attenuation(
-    #     tau_v=gamma * (0.33 + 0.67)
-    # )
-    # old_spec_attenuated = old_spec.apply_attenuation(
-    #     tau_v=gamma * 0.33
-    # )
-
-    # spec['gamma'] = young_spec_attenuated + old_spec_attenuated
-
-    # # LOS model (Vijayan+21)
-    # tau_v = _gal.calculate_los_tau_v(kappa=0.0795, kernel=kern.get_kernel(), force_loop=False)
-    
-    # # plt.hist(np.log10(tau_v))
-    # # plt.show()
-
-    # young_spec_attenuated = young_reprocessed_spec_part.apply_attenuation(
-    #     tau_v=tau_v + (_gal.stars.metallicities / 0.01)
-    # )
-    # old_spec_attenuated = old_spec_part.apply_attenuation(tau_v=tau_v)
-
-    # spec['los'] = young_spec_attenuated.sum() + old_spec_attenuated.sum()
-
-    return spec
-
-
-def set_up_filters():
-    
-    # Define a filter collection object
-    fs = [f"SLOAN/SDSS.{f}" for f in ['u', 'g', 'r', 'i', 'z']]
-    fs += ['GALEX/GALEX.FUV', 'GALEX/GALEX.NUV']
-    fs += [f'Generic/Johnson.{f}' for f in ['U', 'B', 'V', 'J']]
-    fs += [f'2MASS/2MASS.{f}' for f in ['J', 'H', 'Ks']]
-    fs += [f'HST/ACS_HRC.{f}'
-           for f in ['F435W', 'F606W', 'F775W', 'F814W', 'F850LP']]
-    fs += [f'HST/WFC3_IR.{f}'
-           for f in ['F098M', 'F105W', 'F110W', 'F125W', 'F140W', 'F160W']]
-
-    fs += [f'JWST/NIRCam.{f}' 
-            for f in [
-                'F070W', 'F090W', 'F115W', 'F140M', 'F150W',
-                'F162M', 'F182M', 'F200W', 'F210M', 'F250M',
-                'F277W', 'F300M', 'F356W', 'F360M', 'F410M',
-                'F430M', 'F444W', 'F460M', 'F480M']]
-    
-    fs += [f'JWST/MIRI.{f}' 
-            for f in [
-                'F1000W', 'F1130W', 'F1280W', 'F1500W', 'F1800W',
-                'F2100W', 'F2550W', 'F560W', 'F770W']]
-
-    tophats = {
-        "UV1500": {"lam_eff": 1500, "lam_fwhm": 300},
-        "UV2800": {"lam_eff": 2800, "lam_fwhm": 300},
-    }
-
-    fc = FilterCollection(
-        filter_codes=fs,
-        tophat_dict=tophats,
-        new_lam=grid.lam
-    )
-
-    return fc
+    return weighted_metallicity.value
 
 
 def save_dummy_file(h5_file, region, tag, filters,
-                    keys=['stellar','intrinsic','screen','CF00','gamma', 'los']):
+                    keys=['stellar']):
 
     """
     Save a dummy hdf5 file with the expected hdf5 structure but
@@ -170,24 +109,6 @@ def save_dummy_file(h5_file, region, tag, filters,
             dset = sbgrp.create_dataset(f'{str(key)}', data=[])
             dset.attrs['Units'] = 'erg/(Hz*s)'
 
-            sbgrp = grp.require_group('Fluxes')
-            # Create separate groups for different instruments
-            for f in filters:
-                dset = sbgrp.create_dataset(
-                    f'{str(key)}/{f}',
-                    data=[]
-                )
-                dset.attrs['Units'] = 'erg/(cm**2*s)'
-
-            sbgrp = grp.require_group('Luminosities')
-            # Create separate groups for different instruments
-            for f in filters:
-                dset = sbgrp.create_dataset(
-                    f'{str(key)}/{f}',
-                    data=[]
-                )
-                dset.attrs['Units'] = 'erg/s'
-
 
 if __name__ == "__main__":
 
@@ -204,12 +125,14 @@ if __name__ == "__main__":
         "region",
         type=str,
         help="FLARES region",
+        default='39',
     )
     
     parser.add_argument(
         "tag",
         type=str,
         help="FLARES snapshot tag",
+        default='005_z010p000',
     )
     
     parser.add_argument(
@@ -226,7 +149,7 @@ if __name__ == "__main__":
         type=str,
         required=False,
         help="Synthesizer grid file",
-        default = "bpass-2.2.1-bin_chabrier03-0.1,100.0_cloudy-c17.03"
+        default = "bpass-2.2.1-bin_chabrier03-0.1,300.0"
     )
     
     parser.add_argument(
@@ -234,7 +157,7 @@ if __name__ == "__main__":
         type=str,
         required=False,
         help="Synthesizer grid directory",
-        default = "../../synthesizer_data/grids/"
+        default = "../../synthesizer-sam/grids/"
     )
     
     parser.add_argument(
@@ -242,7 +165,7 @@ if __name__ == "__main__":
         type=str,
         required=False,
         help="Output file",
-        default = f"./flares_photometry.hdf5"
+        default = f"./flares_photometry_test.hdf5"
     )
     
     parser.add_argument(
@@ -258,13 +181,29 @@ if __name__ == "__main__":
     grid = Grid(
         args.grid_name,
         grid_dir=args.grid_directory,
-        read_lines=False
+        read_lines=False,
     )
+    
+    # We only want the UV continuum (1000-3500A)
+    lam = grid.lam
+    ok_lam = (lam> 1000) & (lam < 3500)
+    print(f'Wavelength arr had {len(lam)} elements.')
+    print(f'Now it has {len(lam[ok_lam])} elements.')
+    print(f'Arr: {[lam[ok_lam]]}')
+    
+    grid = Grid(
+        args.grid_name,
+        grid_dir=args.grid_directory,
+        read_lines=False,
+        new_lam=lam[ok_lam],
+    )
+    
+    # kern = Kernel()
 
-    kern = Kernel()
-
-    # fc = set_up_filters()
-    fc = FilterCollection(path="filter_collection.hdf5")
+    # Save and load filter collection
+    fc_fname = 'filter_collection_uv1500.hdf5'
+    # fc = save_filters(fname=fc_fname)
+    fc = FilterCollection(path=fc_fname)
 
     gals = load_FLARES(
         master_file=args.master_file,
@@ -321,30 +260,52 @@ if __name__ == "__main__":
  
     start = time.time()
 
-    dat = []
+    # dat = []
+    lum_metallicity = np.array([])
+    # young_metallicity = np.array([])
 
     # Loop over the galaxies allocated to rank
+    # print('Getting spectra...')
     for gal_idx in my_inds:
         gal = gals[gal_idx]
-        _spec = get_spectra(gal, grid=grid)
-        if _spec==None:
-            continue
-        dat.append(_spec)
+        # Get spectra
+        # _spec = get_spectra(gal, grid=grid)
+        # if _spec==None:
+        #     continue
+        # dat.append(_spec)
+        # Get UV luminosity-weighted metallicity
+        _lum_metallicity = \
+            get_lum_weighted_metallicity(gal, grid=grid, filters=fc)
+        lum_metallicity = np.append(lum_metallicity, _lum_metallicity)
+        # if my_rank==0:
+        #     print('ending a')
+        #     sys.exit()
+        # # Get initial mass-weighted metallicity for young stars
+        # _young_metallicity = get_young_mass_weighted_metallicity(gal)
+        # young_metallicity = np.append(young_metallicity, _young_metallicity)
 
     # Collate galaxies on rank 0
     if my_rank==0:
-        # world_dat = dat
-        world_dat = np.empty(n_gals, dtype=object)
-        world_dat[my_inds] = dat
+        # world_dat = np.empty(n_gals, dtype=object)
+        # world_dat[my_inds] = dat
+        world_lum_metallicity = np.zeros(n_gals, dtype=np.float32)
+        world_lum_metallicity[my_inds] = lum_metallicity
+        # world_young_metallicity = np.zeros(n_gals, dtype=np.float32)
+        # world_young_metallicity[my_inds] = young_metallicity
         for i in range(1, world_size):
-            rank_dat = world_comm.recv(source=i, tag=1)
+            # rank_dat = world_comm.recv(source=i, tag=1)
             rank_inds = world_comm.recv(source=i, tag=2)
-            # world_dat = np.append(world_dat, rank_dat)
-            world_dat[rank_inds] = rank_dat
+            # world_dat[rank_inds] = rank_dat
+            rank_lum_metallicity = world_comm.recv(source=i, tag=3)
+            world_lum_metallicity[rank_inds] = rank_lum_metallicity
+            # rank_young_metallicity = world_comm.recv(source=i, tag=4)
+            # world_young_metallicity[rank_inds] = rank_young_metallicity
         print(f'Collected data from all {len(world_dat)} galaxies.')
     else:
-        world_comm.send(dat, dest=0, tag=1)
+        # world_comm.send(dat, dest=0, tag=1)
         world_comm.send(my_inds, dest=0, tag=2)
+        world_comm.send(lum_metallicity, dest=0, tag=3)
+        # world_comm.send(young_metallicity, dest=0, tag=4)
 
     end = time.time()
     print(f'Spectra generation: {end - start:.2f}')
@@ -356,6 +317,10 @@ if __name__ == "__main__":
             save_dummy_file(args.output, args.region, args.tag,
                             [f.filter_code for f in fc])
             sys.exit()
+
+    if my_rank==0:
+        print('ending a')
+        sys.exit()
 
     # Save data
     if my_rank==0:
@@ -382,10 +347,11 @@ if __name__ == "__main__":
         # print(f'Photometry calculation: {end - start:.2f}')
 
         # Save spectra, fluxes and luminosities
+        print('Saving hdf5...')
         with h5py.File(args.output, 'w') as hf:
 
             # Use Region/Tag structure
-            grp = hf.require_group(f'{args.region}/{args.tag}')
+            grp = hf.require_group(f'{args.region}/{args.tag}/Galaxy')
             
             # Loop through different spectra / dust models
             for key in dat[0].keys():
@@ -395,55 +361,42 @@ if __name__ == "__main__":
                 if key==list(dat[0].keys())[0]:
                     # We only want the UV continuum (1000-3500A)
                     lam_dat = specs[key].lam # Angstroms
-                    ok = (lam_dat > 1000) & (lam_dat < 3500)
-                    lam_dat = lam_dat[ok]
+                    # ok = (lam_dat > 1000) & (lam_dat < 3500)
+                    # lam_dat = lam_dat[ok]
                     lam = sbgrp.create_dataset(f'wavelength', data=lam_dat)
                     lam.attrs['Units'] = str(specs[key].lam.units)
                 # Add corresponding SED data
                 sed_dat = specs[key].lnu
-                sed_dat = np.transpose(np.transpose(sed_dat)[ok])
+                # sed_dat = np.transpose(np.transpose(sed_dat)[ok])
                 dset = sbgrp.create_dataset(f'{str(key)}', data=sed_dat)
                 dset.attrs['Units'] = str(specs[key].lnu.units)
-                
-                
-                # sbgrp = grp.require_group('Fluxes')
-                # # Create separate groups for different instruments
-                # for f in fluxes[key].filters:
-                #     dset = sbgrp.create_dataset(
-                #         f'{str(key)}/{f.filter_code}',
-                #         data=fluxes[key][f.filter_code]
-                #     )
 
-                #     dset.attrs['Units'] = str(fluxes[key].photometry.units)
+            # Add metallicities
+            dset = grp.create_dataset(
+                'Metallicity/UV1500WeightedStellarZ', data=world_lum_metallicity)
+            dset.attrs['Units'] = 'Dimensionless'
+            dset = grp.create_dataset(
+                'Metallicity/YoungMassWeightedStellarZ', data=world_young_metallicity)
+            dset.attrs['Units'] = 'Dimensionless'
 
-
-                # sbgrp = grp.require_group('Luminosities')
-                # # Create separate groups for different instruments
-                # for f in luminosities[key].filters:
-                #     dset = sbgrp.create_dataset(
-                #         f'{str(key)}/{f.filter_code}',
-                #         data=luminosities[key][f.filter_code]
-                #     )
-
-                #     dset.attrs['Units'] = str(luminosities[key].photometry.units)
-
-
+            # Master file properties
             with h5py.File(args.master_file, 'r') as mf:
 
                 # Add stellar properties
 
                 # Properties in the master file to be copied over
                 h5_dirs = [
-                    'SFR_aperture/30',
-                    'Mstar_aperture/30',
-                    'Metallicity/MassWeightedStellarZ'
+                    'Galaxy/SFR_aperture/30',
+                    'Galaxy/Mstar_aperture/30',
+                    'Galaxy/Metallicity/MassWeightedStellarZ',
                 ]
 
                 for h5_dir in h5_dirs:
                     mf.copy(
-                        mf[f"{args.region}/{args.tag}/Galaxy/{h5_dir}"],
+                        mf[f"{args.region}/{args.tag}/{h5_dir}"],
                         hf,
                         f"{args.region}/{args.tag}/{h5_dir}"
                     )
 
     print('All done!')
+ 

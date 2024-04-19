@@ -7,9 +7,10 @@
 #SBATCH -p cosma7-rp
 #SBATCH -A dp004
 #SBATCH --exclusive
-#SBATCH --array=0-479
+# #SBATCH --array=0-479
+#SBATCH --array=10
 #SBATCH --no-requeue
-#SBATCH -t 24:00:00
+#SBATCH -t 48:00:00
 
 module purge
 module load rockport-settings
@@ -40,7 +41,8 @@ tags=(
 region_idx=$(($SLURM_ARRAY_TASK_ID/${#tags[@]}))
 tag_idx=$(($SLURM_ARRAY_TASK_ID%${#tags[@]}))
 
-out_file=./data_temp/flares_photometry_${regions[$region_idx]}_${tags[$tag_idx]}_test.hdf5
+# out_file=./data_temp/flares_photometry_${regions[$region_idx]}_${tags[$tag_idx]}_test.hdf5
+out_file=./flares_photometry_${regions[$region_idx]}_${tags[$tag_idx]}_just_another_test.hdf5
 
 if [ -f $out_file ]; then
     echo 'File exists.'
@@ -56,7 +58,8 @@ echo Tag: ${tags[$tag_idx]}
 echo $out_file
 echo Number of CPUs: $n_cpus
 
-grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03
+# grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03
+grid_name=bpass-2.2.1-bin_chabrier03-0.1,300.0.hdf5
 grid_dir=/cosma7/data/dp004/dc-seey1/modules/synthesizer-sam/grids
 master=/cosma7/data/dp004/dc-payy1/my_files/flares_pipeline/data/flares.hdf5
 
