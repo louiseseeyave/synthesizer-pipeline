@@ -8,13 +8,61 @@ import matplotlib.pyplot as plt
 from unyt import Myr
 from astropy.cosmology import Planck13
 
-from mpi4py import MPI
+# from mpi4py import MPI
 
 from synthesizer.grid import Grid
 from synthesizer.sed import Sed, combine_list_of_seds
 from synthesizer.filters import FilterCollection
 from synthesizer.load_data.load_flares import load_FLARES
 from synthesizer.kernel_functions import Kernel
+
+
+def test(_gal, grid, age_pivot=None):
+
+    if age_pivot:
+        sed = _gal.stars.get_particle_spectra_incident(grid, old=age_pivot)
+    else:
+        sed = _gal.stars.get_particle_spectra_incident(grid)
+
+    print('Successfully obtained SEDs')
+
+
+def get_spectra(_gal, grid, age_pivot=10. * Myr):
+
+    """
+    Helper method for spectra generation
+
+    Args:
+        _gal (gal type)
+        grid (grid type)
+        age_pivot (float)
+            split between young and old stellar populations, units Myr
+    """
+
+    
+    # Skip over galaxies that have no stellar particles
+    if _gal.stars.nstars==0:
+        print('There are no stars in this galaxy.')
+        return None
+
+    spec = {}
+
+    dtm = _gal.dust_to_metal_vijayan19()
+    
+    # Get young pure stellar spectra (integrated)
+    young_spec = \
+        _gal.stars.get_spectra_incident(grid, young=age_pivot)
+    
+    # Get pure stellar spectra for all old star particles
+    old_spec_part = \
+        _gal.stars.get_particle_spectra_incident(grid) # , old=age_pivot)
+    
+    # Sum and save old and young pure stellar spectra
+    old_spec = old_spec_part.sum()
+
+    spec['stellar'] = old_spec + young_spec
+
+    return spec
 
 
 def get_lum_weighted_metallicity(_gal, grid, filters, age_pivot=10*Myr):
@@ -267,19 +315,24 @@ if __name__ == "__main__":
     # Loop over the galaxies allocated to rank
     # print('Getting spectra...')
     for gal_idx in my_inds:
+
         gal = gals[gal_idx]
+
         # Get spectra
-        # _spec = get_spectra(gal, grid=grid)
-        # if _spec==None:
-        #     continue
-        # dat.append(_spec)
-        # Get UV luminosity-weighted metallicity
-        _lum_metallicity = \
-            get_lum_weighted_metallicity(gal, grid=grid, filters=fc)
-        lum_metallicity = np.append(lum_metallicity, _lum_metallicity)
+        _spec = get_spectra(gal, grid=grid)
+        if _spec==None:
+            continue
+        dat.append(_spec)
+
+        # # Get UV luminosity-weighted metallicity
+        # _lum_metallicity = \
+        #     get_lum_weighted_metallicity(gal, grid=grid, filters=fc)
+        # lum_metallicity = np.append(lum_metallicity, _lum_metallicity)
+
         # if my_rank==0:
         #     print('ending a')
         #     sys.exit()
+
         # # Get initial mass-weighted metallicity for young stars
         # _young_metallicity = get_young_mass_weighted_metallicity(gal)
         # young_metallicity = np.append(young_metallicity, _young_metallicity)

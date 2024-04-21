@@ -4,7 +4,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH -o logs/job.%J.dump
 #SBATCH -e logs/job.%J.err
-#SBATCH -p cosma7-rp
+#SBATCH -p cosma7-shm
 #SBATCH -A dp004
 #SBATCH --exclusive
 # #SBATCH --array=0-439
@@ -13,7 +13,7 @@
 #SBATCH -t 06:00:00
 
 module purge
-module load rockport-settings
+# module load rockport-settings
 module load intel_comp/2020-update2
 module load intel_mpi/2020-update2
 module load ucx/1.13.0rc2

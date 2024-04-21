@@ -36,10 +36,10 @@ def get_spectra(_gal, grid, age_pivot=10. * Myr):
         return None
     # Check stellar ages
     ages = (_gal.stars.ages).to('Myr')
-    old = ages > age_pivot
-    print(f'{np.sum(old)} star particles above age pivot.')
-    young = ages < age_pivot
-    print(f'{np.sum(young)} star particles below age pivot.')
+    # old = ages > age_pivot
+    # print(f'{np.sum(old)} star particles above age pivot.')
+    # young = ages < age_pivot
+    # print(f'{np.sum(young)} star particles below age pivot.')
 
     spec = {}
 
@@ -83,24 +83,12 @@ def get_lum_weighted_metallicity(_gal, grid, filters):
     
     # Get particle metallicity
     metallicity =_gal.stars.metallicities
-    print('metallicity:', metallicity)
-    print('ages:', _gal.stars.ages)
-
-    # if my_rank==0:
-    #     print('ending a')
-    #     sys.exit()
+    # print('metallicity:', metallicity)
+    # print('ages:', _gal.stars.ages)
 
     # Get pure stellar spectra for all star particles
-    sed = _gal.stars.get_particle_spectra_incident(grid)
+    sed = _gal.stars.get_particle_spectra_incident(grid, grid_assignment_method="ngp")
 
-    if my_rank==0:
-        print('ending a')
-        sys.exit()
-    
-    # if my_rank==0:
-    #     print('ending a')
-    #     sys.exit()
-    
     # Calculate the observed SED in nJy
     sed.get_fnu(Planck13, _gal.redshift, igm=False)
     
@@ -109,8 +97,8 @@ def get_lum_weighted_metallicity(_gal, grid, filters):
         _gal.stars.particle_spectra["incident"].get_photo_luminosities(filters)
     luv = lum['UV1500']
 
-    print(f'luv.shape: {luv.shape}')
-    print(f'log10luv: {np.log10(luv)}')
+    # print(f'luv.shape: {luv.shape}')
+    # print(f'log10luv: {np.log10(luv)}')
     
     # Calculate UV luminosity-weighted metallicity
     weighted_metallicity = np.dot(metallicity, luv)/np.sum(luv)
@@ -258,24 +246,25 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # grid = Grid(
+    #     args.grid_name,
+    #     grid_dir=args.grid_directory,
+    #     read_lines=False,
+    # )
+    
+    # # We only want the UV continuum (1000-3500A)
+    # lam = grid.lam
+    # ok_lam = (lam> 1000) & (lam < 3500)
+    # print(f'Wavelength arr had {len(lam)} elements.')
+    # print(f'Now it has {len(lam[ok_lam])} elements.')
+    # print(f'Arr: {[lam[ok_lam]]}')
+    
     grid = Grid(
         args.grid_name,
         grid_dir=args.grid_directory,
         read_lines=False,
-    )
-    
-    # We only want the UV continuum (1000-3500A)
-    lam = grid.lam
-    ok_lam = (lam> 1000) & (lam < 3500)
-    print(f'Wavelength arr had {len(lam)} elements.')
-    print(f'Now it has {len(lam[ok_lam])} elements.')
-    print(f'Arr: {[lam[ok_lam]]}')
-    
-    grid = Grid(
-        args.grid_name,
-        grid_dir=args.grid_directory,
-        read_lines=False,
-        new_lam=lam[ok_lam],
+        lam_lims=(1000 * angstrom, 3500 * angstrom),
+        # new_lam=lam[ok_lam],
     )
     
     # kern = Kernel()
@@ -397,10 +386,6 @@ if __name__ == "__main__":
             save_dummy_file(args.output, args.region, args.tag,
                             [f.filter_code for f in fc])
             sys.exit()
-
-    if my_rank==0:
-        print('ending a')
-        sys.exit()
 
     # Save data
     if my_rank==0:
